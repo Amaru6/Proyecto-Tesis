@@ -1,0 +1,789 @@
+(function ($) {
+
+    Drupal.behaviors.generateImage = {
+        attach: function (context, settings) {
+
+          // Add Promise support to window if one doesn't exist.
+          if (!window.Promise) {
+            window.Promise = Promise;
+          }
+          var evt = document.createEvent('UIEvents');
+          evt.initUIEvent('resize', true, false, window, 0);
+
+          var generateCanvasRequest;
+
+          // Hide sharing buttons and show the first-step sharing icon instead.
+          $('body', context).on('click', '.container-map .map-tab a, .container-map .country-info--tab a, .country-list-wrapper .pointer', function () {
+            $('.social-icons.generate-screenshot i, .share-block .text-step').removeClass('visible');
+            $('.share-block').addClass('share-block--first-step');
+            $('.start-sh-creation, .share-block .text-first-step').addClass('visible');
+            if ($(this).hasClass('pointer')) $(this).toggleClass('expanded');
+          });
+
+          // Trigger screenshot creation.
+          $('body', context).on('click', '.start-sh-creation, .share-block--first-step', function () {
+            var format = ($(this).hasClass('share-mobile') || $('.main-panel.offcanvas-right').length) ? 'mobile' : 'desktop';
+            generateCanvas(format);
+          });
+
+          // Trigger FB sharing.
+          $('body', context).on('click', '.generate-screenshot .fa.fa-facebook-official.facebook', function () {
+            var image = $("meta[property='og\\:image']").attr('content');
+            var shortUrl = $("meta[property='og\\:url']").attr('content');
+            var name = $("meta[property='og\\:title']").attr('content');
+            var caption = 'www.fraserinstitute.org/economic-freedom';
+            var description = $("meta[property='og\\:description']").attr('content');
+            var url = 'http://www.facebook.com/dialog/feed?app_id=' + '650360008458896' +
+              '&link=' + shortUrl +
+              '&picture=' + image +
+              '&name=' + encodeURIComponent(name) +
+              '&caption=' + caption +
+              '&description=' + description +
+              '&display=popup';
+            window.open(url);
+          });
+
+          // Trigger Twitter sharing.
+          $('body', context).on('click', '.generate-screenshot .fa.fa-twitter-square.twitter', function () {
+            var link = "https://twitter.com/intent/tweet";
+            var shortUrl = $("meta[name='twitter\\:url']").attr('content');
+            var url = encodeURIComponent(window.location.href);
+
+            // Customize sharing text.
+            var text = encodeURIComponent(getUpdatedTitle());
+            window.open(link + '?original_referer=' + url + '&url=' + shortUrl + '&text=' + text);
+          });
+
+          // Trigger E-mail sharing.
+          $('body', context).on('click', '.generate-screenshot .fa.fa-envelope', function () {
+            var mailTo = "";
+            var subject = $("meta[name='twitter\\:title']").attr('content');
+            var body = $("meta[property='og\\:description']").attr('content') + '\r\n ' + $("meta[name='twitter\\:url']").attr('content');
+            window.location.href = 'mailto:' + mailTo + '?subject=' + subject + '&body=' + body;
+          });
+
+          // Trigger meta title update.
+          $('body', context).on('click', '.country-filter div', function () {
+            // Update metatags.
+            updateMetatags();
+          });
+
+          // Function which generates canvas and sends its content to the server.
+          function generateCanvas(shareFormat) {
+
+            // Generate spinner.
+            var opts = {
+              lines: 11 // The number of lines to draw
+              , length: 8 // The length of each line
+              , width: 7 // The line thickness
+              , radius: 20 // The radius of the inner circle
+              , scale: 0.3 // Scales overall size of the spinner
+              , corners: 1 // Corner roundness (0..1)
+              , color: '#000' // #rgb or #rrggbb or array of colors
+              , opacity: 0.25 // Opacity of the lines
+              , rotate: 0 // The rotation offset
+              , direction: 1 // 1: clockwise, -1: counterclockwise
+              , speed: 1 // Rounds per second
+              , trail: 52 // Afterglow percentage
+              , fps: 20 // Frames per second when using setTimeout() as a fallback for CSS
+              , zIndex: 2000000000 // The z-index (defaults to 2000000000)
+              , className: 'spinner2' // The CSS class to assign to the spinner
+              , top: '11px' // Top position relative to parent
+              , left: '90%' // Left position relative to parent
+              , shadow: false // Whether to render a shadow
+              , hwaccel: false // Whether to use hardware acceleration
+              , position: 'relative' // Element positioning
+            };
+
+            // Start spinner.
+            var spinnerId = ($('.main-panel.offcanvas-right').length || $('.map-tab.active').length)
+              ? '#spinner-rank'
+              : (shareFormat == 'desktop' ? '#spinner' : '#spinner-mobile');
+            var target = $('body').find(spinnerId);
+            var spinner = new Spinner(opts).spin();
+            if (spinnerId == '#spinner-rank' && shareFormat == 'mobile') {
+              target.prependTo('.offcanvas-sidebar.right .share-block').append(spinner.el);
+            }
+            else {
+              target.append(spinner.el);
+            }
+            // var spinner = new Spinner(opts).spin(target);
+
+            // Disable scrolling to generate screenshot correctly.
+            disableScroll();
+
+            // Prevent multiple requests at a time.
+            if (typeof generateCanvasRequest !== 'undefined') generateCanvasRequest.abort();
+
+            // General request which updates meta data first, and then generates the image.
+            generateCanvasRequest = $.ajax({
+              url: '/ajax/ftw-maps-pages/check-img', // This is the AjAX URL set by the ftw_maps_pages Module
+              method: "POST",
+              data: {get: location.search, url: window.location.href},
+              dataType: "json",
+              success: function (resultData) {
+
+                // Update twitter:url meta tag with newly created short url.
+                var ogUrl = $("meta[property='og\\:url']");
+                if (ogUrl.length) {
+                  ogUrl.attr("content", resultData.url);
+                }
+                else {
+                  $('head').append('<meta property="og:url" content="' + resultData.url + '" />');
+                }
+
+                // Update twitter:url meta tag with newly created short url.
+                var twUrl = $("meta[name='twitter\\:url']");
+                if (twUrl.length) {
+                  twUrl.attr("content", resultData.url);
+                }
+                else {
+                  $('head').append('<meta name="twitter:url" content="' + resultData.url + '" />');
+                }
+
+                // Update og:image meta tag with newly created image.
+                var ogImage = $("meta[property='og\\:image']");
+                if (ogImage.length) {
+                  ogImage.attr("content", resultData.imagePath);
+                }
+                else {
+                  $('head').append('<meta property="og:image" content="' + resultData.imagePath + '" />');
+                }
+
+                // Update twitter:image meta tag with newly created image.
+                var twImage = $("meta[name='twitter\\:image']");
+                if (twImage.length) {
+                  twImage.attr("content", resultData.imagePath);
+                }
+                else {
+                  $('head').append('<meta name="twitter:image" content="' + resultData.imagePath + '" />');
+                }
+
+                // Detect page type (map/graph).
+                var captured = /page=([^&]+)/.exec(window.location.href)[1];
+                var pageType = (captured.indexOf('map') !== -1) ? 'map' : 'graph';
+
+                var elementsToHide, canvasContainer;
+
+                // Check if it's a map page.
+                if (pageType == 'map') {
+
+                  // Remember general body height in order to restore it later.
+                  var body = $('body');
+                  var bodyHeight = body.height();
+                  var additionalHeight;
+
+                  // Check if it's a desktop version.
+                  if (shareFormat == 'desktop') {
+
+                    // Check if the user shares a country-info tab.
+                    if ($('.country-info--tab.active').length) {
+                      updateMetatags('mapCountries');
+
+                      canvasContainer = $('.map-country-panel-wrapper.country-panel-wrapper');
+
+                      // Make changes to dom and styles for the appropriate screenshot.
+                      $('map-country-panel').css('display', 'inline-block');
+                      $('.country-info--item').css('width', '295px');
+                      canvasContainer.css('width', 295 * $('.country-info--item').length);
+                      elementsToHide = $('.remove-country--icon');
+                    }
+
+                    // Otherwise, the user shares a world rank tab.
+                    else if ($('.map-tab.active').length) {
+                      updateMetatags('mapWorld');
+
+                      // Check if rank table is expanded.
+                      if ($('.country-list-wrapper .pointer').hasClass('expanded')) {
+
+                        // Hide all rows except top 10.
+                        $('#ranking .map-country-panel-wrapper.world-panel-wrapper tr:nth-child(n+12)').hide();
+                      }
+
+                      // Scroll it to the top.
+                      $('.country-list-wrapper').scrollTop(0);
+
+                      // Adjust container height in order to get full content on the screenshot.
+                      canvasContainer = $('#ranking.tab-pane');
+                      canvasContainer.height($('#ranking .world-tab-header').height() + $('#ranking .map-country-panel-wrapper.world-panel-wrapper').height());
+                      elementsToHide = $('#ranking .share-block, .country-list-wrapper .pointer');
+                    }
+                    additionalHeight = canvasContainer.height();
+                  }
+
+                  // Otherwise, if it's a mobile version.
+                  else {
+
+                    // Check if the user shares a country-info tab.
+                    if ($('.main-panel.offcanvas-left').length) {
+                      updateMetatags('mapCountries');
+                      canvasContainer = $('.offcanvas-sidebar.left .map-country-panel-wrapper.country-panel-wrapper');
+
+                      // Make changes to dom and styles for the appropriate screenshot.
+                      $('.offcanvas-sidebar.left map-country-panel').css('display', 'inline-block');
+                      var countryWidth = $('.offcanvas-sidebar.left .side-panel').width();
+                      $('.offcanvas-sidebar.left .country-info--item').css('width', countryWidth);
+                      canvasContainer.css('width', countryWidth * $('.offcanvas-sidebar.left .country-info--item').length);
+                      elementsToHide = $('.offcanvas-sidebar.left .share-block, .remove-country--icon');
+                      var bodyWidth = body.width();
+                      body.width(bodyWidth + canvasContainer.width());
+                    }
+
+                    // Otherwise, the user shares a world rank tab.
+                    else if ($('.main-panel.offcanvas-right').length) {
+                      updateMetatags('mapWorld');
+
+                      // Check if rank table is expanded.
+                      if ($('.offcanvas-sidebar.right .country-list-wrapper .pointer').hasClass('expanded')) {
+
+                        // Hide all rows except top 10.
+                        $('.offcanvas-sidebar.right .tab-pane .map-country-panel-wrapper.world-panel-wrapper tr:nth-child(n+12)').hide();
+                      }
+
+                      // Scroll it to the top.
+                      $('.side-panel .tab-pane .country-list-wrapper').scrollTop(0);
+
+                      // Adjust container height in order to get full content on the screenshot.
+                      canvasContainer = $('.offcanvas-sidebar.right .tab-pane');
+                      elementsToHide = $('.offcanvas-sidebar.right .share-block, .country-list-wrapper .pointer');
+                      additionalHeight = canvasContainer.find('.world-tab-header').height() + 70 + canvasContainer.find('.map-country-panel-wrapper.world-panel-wrapper').height();
+                      var appHeight = $('.app-wrapper').height();
+                      $('.app-wrapper').height(additionalHeight);
+                    }
+                  }
+
+                  body.height(bodyHeight + additionalHeight);
+                }
+                else {
+                  updateMetatags('charts');
+                  canvasContainer = $('.additional-wrapper');
+                  var canvasContainerWidth = canvasContainer.width();
+                  elementsToHide = $('.timeline-label, fraser-slider, .charts-selector');
+
+                  // Fix svg-to-canvas converting issue.
+                  d3.selectAll(".domain")
+                    .style("stroke", "black")
+                    .style("fill", "transparent");
+                  d3.selectAll(".y.axis line:not(.first-y-axis)").style({
+                    'fill': 'transparent',
+                    'stroke': '#DCDCDC',
+                    'stroke-width': '1'
+                  });
+                  d3.selectAll(".y.axis path").style({'fill': 'transparent', 'stroke': '#000000', 'stroke-width': '1'});
+                  d3.selectAll(".line-graph circle").style({'fill': '#ffffff'});
+                  d3.selectAll(".additional-wrapper .col-md-1, .additional-wrapper .col-md-9, .additional-wrapper .col-md-2").style('float', 'left');
+                  if (isIE()) {
+                    d3.selectAll(".x.axis text").attr('y', '18');
+                  }
+
+                  // Check if it's a desktop version.
+                  if (shareFormat == 'desktop') {
+
+                    canvasContainer.css({
+                      display: 'inline-block',
+                      padding: '0 20px',
+                      width: '894px',
+                      backgroundColor: '#ffffff'
+                    });
+                    canvasContainer.find('.charts-selection-panel, fraser-slider, .charts-timebar--wrapper').hide();
+                    canvasContainer.find('.main-panel').css('width', '654px');
+                    canvasContainer.find('.legend-panel-mobile').css({'width': '200px', 'margin-top': '60px'});
+                    canvasContainer.find('.charts-title').css({'margin-top': '0', 'width': '859px'});
+                    canvasContainer.find('.graph-category-filter--title').css({'color': '#505050'});
+                    $('body').find('.legend').addClass('for-screenshot');
+                    canvasContainer.find('.line-graph-filter-list--item label').css({'color': '#505050'});
+                  }
+
+                  // Otherwise, it's a mobile version.
+                  else if (shareFormat == 'mobile') {
+                    canvasContainer.css({
+                      display: 'inline-block',
+                      padding: '0 20px',
+                      width: '894px',
+                      backgroundColor: '#ffffff'
+                    });
+                    canvasContainer.find('.charts-selection-panel, .charts-timebar--wrapper').hide();
+                    canvasContainer.find('.main-panel').css('width', '654px');
+                    canvasContainer.find('.legend-panel-mobile').css({'width': '200px', 'margin-top': '60px'});
+                    canvasContainer.find('.charts-title').css({'margin-top': '0', 'width': '859px'});
+                    canvasContainer.find('.graph-category-filter--title').css({'color': '#505050'});
+                    $('body').find('.legend').addClass('for-screenshot');
+                    canvasContainer.find('.line-graph-filter-list--item label').css({'color': '#505050'});
+                  }
+                  window.dispatchEvent(evt);
+                  $('body').find('.legend-panel-mobile').find('.legend').find('.country').find('.category-text').css({'color': '#505050'});
+                }
+
+                // Hide elements which are not used in the screenshot.
+                if (elementsToHide && elementsToHide.length) {
+                  elementsToHide.css('visibility', 'hidden');
+                }
+
+                // Convert chart to canvas.
+                setTimeout(function () {
+                  if (pageType != 'map') {
+                    d3.selectAll(".domain")
+                      .style("stroke", "black")
+                      .style("fill", "transparent");
+                    d3.selectAll(".y.axis line:not(.first-y-axis)").style({
+                      'fill': 'transparent',
+                      'stroke': '#DCDCDC',
+                      'stroke-width': '1'
+                    });
+                    d3.selectAll(".y.axis path").style({
+                      'fill': 'transparent',
+                      'stroke': '#000000',
+                      'stroke-width': '1'
+                    });
+                    d3.selectAll(".line-graph circle").style({'fill': '#ffffff'});
+                    d3.selectAll(".additional-wrapper .col-md-1, .additional-wrapper .col-md-9, .additional-wrapper .col-md-2").style('float', 'left');
+                    if (isIE()) {
+                      d3.selectAll(".x.axis text").attr('y', '18');
+                    }
+                  }
+                  html2canvas(canvasContainer, {
+                    background: '#ffffff',
+                    width: canvasContainer.width() + 20,
+                    allowTaint: true,
+                    useCORS: true
+                  }).then(function (canvas) {
+
+                    // Get canvas data.
+                    var generatedImg = canvas.toDataURL();
+
+                    // Send canvas data to the ajax callback function.
+                    $.ajax({
+                      url: '/ajax/ftw-maps-pages/save-img', // This is the AjAX URL set by the ftw_maps_pages Module
+                      method: "POST",
+                      data: {img: generatedImg, get: location.search, url: window.location.href},
+                      dataType: "json",
+                      success: function (data) {
+
+                        // Stop spinner and enable scroll.
+                        spinner.stop(target);
+                        enableScroll();
+
+                        // Show 2nd step sharing buttons.
+                        $('.social-icons.generate-screenshot i, .text-second-step').addClass('visible');
+                        $('.share-block').removeClass('share-block--first-step');
+                        $('.start-sh-creation, .text-first-step').removeClass('visible');
+                      },
+                      error: function () {
+
+                        // Stop spinner and enable scroll.
+                        spinner.stop(target);
+                        enableScroll();
+                      }
+                    });
+
+                    // Check if it's a map page.
+                    if (pageType == 'map') {
+
+                      // Check if the visitor uses desktop version.
+                      if (shareFormat == 'desktop') {
+
+                        // Check if country tab is active.
+                        if ($('.country-info--tab.active').length) {
+
+                          // Restore default styles.
+                          var canvasContainer = $('.map-country-panel-wrapper.country-panel-wrapper');
+                          $('map-country-panel').css('display', 'block');
+                          $('.country-info--item').css('width', 'auto');
+                          canvasContainer.css('width', 'auto');
+                        }
+
+                        // Otherwise, world rank tab is active.
+                        else {
+
+                          // Show all ranking rows.
+                          $('#ranking .map-country-panel-wrapper.world-panel-wrapper tr:nth-child(n+12)').show();
+                        }
+                      }
+
+                      // Otherwise, the user is using the mobile version.
+                      else {
+
+                        // Check if country tab is active.
+                        if ($('.main-panel.offcanvas-left').length) {
+
+                          // Restore default styles.
+                          body.width(bodyWidth);
+                          var canvasContainer = $('.offcanvas-sidebar.left .map-country-panel-wrapper.country-panel-wrapper');
+                          $('.offcanvas-sidebar.left map-country-panel').css('display', 'block');
+                          $('.offcanvas-sidebar.left .country-info--item').css('width', 'auto');
+                          canvasContainer.css('width', 'auto');
+                        }
+
+                        // Otherwise, world rank tab is active.
+                        else if ($('.main-panel.offcanvas-right').length) {
+
+                          // Show all ranking rows.
+                          $('.app-wrapper').height(appHeight);
+                          $('.offcanvas-sidebar.right .tab-pane .map-country-panel-wrapper.world-panel-wrapper tr:nth-child(n+12)').show();
+                        }
+                      }
+
+                      // Restore body height.
+                      body.height(bodyHeight);
+                    }
+
+                    // Otherwise, it's a graph page.
+                    else {
+                      d3.selectAll(".x.axis text").attr('y', '9');
+                      canvasContainer = $('.additional-wrapper');
+                      // Check if it's a desktop version.
+                      if (shareFormat == 'desktop') {
+                        canvasContainer.css({
+                          display: 'block',
+                          padding: '0',
+                          width: canvasContainerWidth,
+                          background: 'none'
+                        });
+                        $('body').find('.legend').removeClass('for-screenshot');
+                        canvasContainer.find('.charts-timebar--wrapper').css('display', '');
+                        canvasContainer.find('.charts-selection-panel, fraser-slider').show();
+                        canvasContainer.find('.main-panel').removeAttr('style');
+                        canvasContainer.find('.legend-panel-mobile').removeAttr('style');
+                        canvasContainer.find('.charts-title').css('width', 'auto');
+                        canvasContainer.find('.line-graph-filter-list--item label').removeAttr('style');
+                        canvasContainer.find('.graph-category-filter--title').removeAttr('style');
+                      }
+
+                      // Otherwise, it's a mobile version.
+                      else if (shareFormat == 'mobile') {
+                        canvasContainer.css({
+                          display: 'block',
+                          padding: '0',
+                          width: canvasContainerWidth,
+                          background: 'none'
+                        });
+                        $('body').find('.legend').removeClass('for-screenshot');
+                        canvasContainer.find('.charts-timebar--wrapper').css('display', '');
+                        canvasContainer.find('.charts-selection-panel').show();
+                        canvasContainer.find('.main-panel').css('width', '100%');
+                        canvasContainer.find('.legend-panel-mobile').css({'width': '100%', 'margin-top': '0'});
+                        canvasContainer.find('.charts-title').css('width', 'auto');
+                        canvasContainer.find('.line-graph-filter-list--item label').removeAttr('style');
+                        canvasContainer.find('.graph-category-filter--title').removeAttr('style');
+                      }
+                      window.dispatchEvent(evt);
+                    }
+
+                    // Show all hidden elements.
+                    elementsToHide.css('visibility', 'visible');
+                  });
+                }, 200);
+
+              },
+              error: function () {
+
+                // Stop spinner and enable scroll.
+                spinner.stop(target);
+                enableScroll();
+              }
+            });
+          }
+
+          // Disable scroll functionality.
+          // left: 37, up: 38, right: 39, down: 40,
+          // spacebar: 32, pageup: 33, pagedown: 34, end: 35, home: 36
+          var keys = {37: 1, 38: 1, 39: 1, 40: 1};
+
+          function customPreventDefault(e) {
+            e = e || window.event;
+            if (e.preventDefault)
+              e.preventDefault();
+            e.returnValue = false;
+          }
+
+          function preventDefaultForScrollKeys(e) {
+            if (keys[e.keyCode]) {
+              customPreventDefault(e);
+              return false;
+            }
+          }
+
+          function disableScroll() {
+            if (window.addEventListener) {
+              // older FF
+              window.addEventListener('DOMMouseScroll', customPreventDefault, false);
+            }
+            window.onwheel = customPreventDefault; // modern standard
+            window.onmousewheel = document.onmousewheel = customPreventDefault; // older browsers, IE
+            document.onkeydown = preventDefaultForScrollKeys;
+          }
+
+          function enableScroll() {
+            if (window.removeEventListener) {
+              window.removeEventListener('DOMMouseScroll', customPreventDefault, false);
+            }
+            window.onmousewheel = document.onmousewheel = null;
+            window.onwheel = null;
+            document.onkeydown = null;
+          }
+
+          function isIE(userAgent) {
+            userAgent = userAgent || navigator.userAgent;
+            return userAgent.indexOf("MSIE ") > -1 || userAgent.indexOf("Trident/") > -1 || userAgent.indexOf("Edge/") > -1;
+          }
+
+          function updateMetatags(section) {
+            var description = getUpdatedDescription(section);
+
+            var ogDescription = $("meta[property='og\\:description']");
+            if (ogDescription.length) {
+              ogDescription.attr("content", description);
+            }
+            else {
+              $('head').append('<meta property="og:description" content="' + description + '" />');
+            }
+
+            var twDescription = $("meta[name='twitter\\:description']");
+            if (twDescription.length) {
+              twDescription.attr("content", description);
+            }
+            else {
+              $('head').append('<meta property="twitter:description" content="' + description + '" />');
+            }
+
+            // Customize sharing title.
+
+            var title = getUpdatedTitle();
+
+            var ogTitle = $("meta[property='og\\:title']");
+            if (ogTitle.length) {
+              ogTitle.attr("content", title);
+            }
+            else {
+              $('head').append('<meta property="og:title" content="' + title + '" />');
+            }
+
+            var twTitle = $("meta[name='twitter\\:title']");
+            if (twTitle.length) {
+              twTitle.attr("content", title);
+            }
+            else {
+              $('head').append('<meta property="twitter:title" content="' + title + '" />');
+            }
+
+          }
+
+          function getUpdatedTitle() {
+            var url = new URL(window.location.href);
+            var geozone = url.searchParams.get("geozone");
+            var country = url.searchParams.get("selectedCountry");
+            if (country !== '') {
+              switch (country) {
+                case 'USA':
+                  country = ' - U.S. States';
+                  break;
+                case 'CAN':
+                  country = ' - Canadian Provinces';
+                  break;
+                case 'MEX':
+                  country = ' - Mexico States';
+                  break;
+                case 'All':
+                  country = ' - All Government';
+                  break;
+              }
+            }
+
+            return geozone === 'na' ? 'Economic Freedom of North America' + country : 'Economic Freedom of the World';
+          }
+
+          function getUpdatedDescription(section) {
+            var description;
+            var url = new URL(window.location.href);
+            var geozone = url.searchParams.get("geozone");
+            if (geozone !== 'na' && section !== '') {
+              switch (section) {
+                case 'mapCountries':
+                  description = "How free are you? Click to see specific tables for 159 countries and jurisdictions";
+                  break;
+                case 'mapWorld':
+                  description = "How free are you? Click to see the global ranking of 159 countries and jurisdictions";
+                  break;
+                case 'charts':
+                  description = "How free are you? Click to learn more about the world’s premier measurement of economic freedom";
+                  break;
+              }
+            } else {
+              var country = url.searchParams.get("selectedCountry");
+              if (country !== '') {
+                switch (country) {
+                  case 'USA':
+                    description = 'How free are you? Click to see specific tables for 50 states and jurisdictions';
+                    break;
+                  case 'CAN':
+                    description = 'How free are you? Click to see specific tables for 10 provinces';
+                    break;
+                  case 'MEX':
+                    description = 'How free are you? Click to see specific tables for 32 states';
+                    break;
+                  case 'All':
+                    description = 'How free are you? Click to see specific tables for 92 states, provinces and jurisdictions';
+                    break;
+                }
+              }
+            }
+            return description;
+          }
+        }
+    };
+
+    Drupal.behaviors.mobileMenu = {
+        attach: function (context, settings) {
+
+            $("#mobile-menu").mmenu({
+                "slidingSubmenus": false,
+                "extensions": [
+                  "pagedim-black"
+               ],
+               "offCanvas": {
+                    "position": "right",
+                    "zposition": "front"
+                }
+            });
+        }
+    };
+
+    Drupal.behaviors.navTweaks = {
+       attach: function (context, settings) {
+
+           $('li.no-link > a').removeAttr('href');
+
+       }
+    };
+
+    // Add triggering input click to it's <li /> parent on graph categories.
+    Drupal.behaviors.graphCategories = {
+        attach: function (context, settings) {
+
+            $('body').on('click', '.line-graph-filter-list--item', function (e) {
+                e.stopPropagation();
+                $(this).find('input').click();
+            });
+        }
+    };
+
+    // Select category.
+    Drupal.behaviors.selectCategory = {
+        attach: function (context, settings) {
+
+            $('#views-exposed-form-category-economic-freedom-page', context).once().find('.form-item-tid').each(function () {
+                $(this).children('label').on('click', function() {
+                    $('.form-item-tid').removeClass('active');
+                    $(this).parent().addClass('active');
+                    if ($(this).parent().find('input').val() == 'All') {
+                      $('body').addClass('show-views-footer');
+                    } else {
+                      $('body').removeClass('show-views-footer');
+                    }
+                });
+            });
+
+            $('#views-exposed-form-category-economic-freedom-page').find('#edit-tid-mobile').selectpicker('mobile');
+
+            $('#views-exposed-form-category-economic-freedom-page').find('div.dropdown-menu').removeClass('open');
+
+            $('#views-exposed-form-category-economic-freedom-page').find('button.dropdown-toggle').on('click', function() {
+               if ($(this).siblings('.dropdown-menu').hasClass('open')) {
+                   $(this).siblings('.dropdown-menu').hide().removeClass('open');
+               }
+               else {
+                   $(this).siblings('.dropdown-menu').show().addClass('open');
+               }
+            });
+
+            $('#views-exposed-form-category-economic-freedom-page', context).find('li').on('click', function(e) {
+                e.preventDefault();
+                $('#views-exposed-form-category-economic-freedom-page').find('button.dropdown-toggle').click();
+            });
+
+            // Fix mobile filtering.
+            $('#edit-tid-mobile', context).once().on('change', function (e) {
+                $('input[name="tid"]').val($(this).val());
+                if ($(this).val() == 'All') {
+                    $('body').addClass('show-views-footer');
+                } else {
+                    $('body').removeClass('show-views-footer');
+                }
+            });
+
+          // Set checked category active.
+          $('#edit-tid-wrapper').find('input:radio[checked="checked"]').once(function () {
+              $(this).parents('.form-type-radio').addClass('active');
+              if ($(this).val() == 'All') {
+                  $('body').addClass('show-views-footer');
+              } else {
+                  $('body').removeClass('show-views-footer');
+              }
+          });
+
+        }
+    };
+
+  // Pass active tab index to the print url.
+    Drupal.behaviors.printTabContent = {
+        attach: function (context, settings) {
+            $('body').find('.printable').each(function () {
+                var printIndex = $(this).data('print-index');
+                var printUrl = $(this).find('.print_html a').attr('href') + '?active-tab=' + printIndex;
+                $(this).find('.print_html a').attr('href', printUrl);
+            })
+        }
+    };
+
+  // Show active tab if set in url.
+  Drupal.behaviors.showActiveTab = {
+    attach: function (context, settings) {
+      var url = document.location.toString();
+      if (url.match('#')) {
+        $('.nav-tabs a[href="#' + url.split('#')[1] + '"]').tab('show');
+      }
+
+      // Make menu item to show another tab.
+      $('.tb-megamenu-item a').on('click', function (e) {
+        var destination = $(this).attr('href');
+        if (destination.match('#')) {
+          if ($('.nav-tabs a[href="#' + destination.split('#')[1] + '"]').length) {
+            $('.nav-tabs a[href="#' + destination.split('#')[1] + '"]').tab('show');
+            return false;
+          }
+        }
+      });
+
+      // Prevent page from scrolling to the tab on load.
+      if (location.hash) {
+        setTimeout(function() {
+          window.scrollTo(0, 0);
+        }, 0);
+      }
+    }
+  };
+
+  // Show active tab if set in url.
+  Drupal.behaviors.efnaTempModal = {
+    attach: function (context, settings) {
+      //console.log(GetURLParameter('geozone'));
+      // if ($('#efna-temp-modal').length > 0 && GetURLParameter('geozone').length > 0 && GetURLParameter('geozone') =='na') {
+      //   setTimeout(function() {
+      //     $('#efna-temp-modal').modal();
+      //     return;
+      //   }, 0);
+      // }
+      // function GetURLParameter(sParam) {
+      //   var sPageURL = window.location.search.substring(1);
+      //   var sURLVariables = sPageURL.split('&');
+      //   for (var i = 0; i < sURLVariables.length; i++) {
+      //     var sParameterName = sURLVariables[i].split('=');
+      //     if (sParameterName[0] == sParam) {
+      //       return sParameterName[1];
+      //     }
+      //   }
+      // }
+    }
+  };
+
+}(jQuery));
